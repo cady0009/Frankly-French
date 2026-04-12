@@ -1,0 +1,7 @@
+{
+  "name": "Frankly French",
+  "description": "An immersive French language learning companion featuring AI tutoring, interactive lessons, and pronunciation practice.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
