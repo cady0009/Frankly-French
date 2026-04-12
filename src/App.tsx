@@ -59,7 +59,7 @@ export default function App() {
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [phrasebook, setPhrasebook] = useState<{french: string, english: string}[]>([]);
   
-  // Gamification state
+  const [isLoaded, setIsLoaded] = useState(false);
   const [points, setPoints] = useState(0);
   const [streak, setStreak] = useState(0);
   const [earnedBadges, setEarnedBadges] = useState<string[]>([]);
@@ -192,15 +192,18 @@ export default function App() {
       });
       setLastAttended(data.lastAttended || {});
     }
+    setIsLoaded(true);
   }, []);
 
   useEffect(() => {
+    if (!isLoaded) return;
     const data = { phrasebook, points, streak, earnedBadges, stats, lastAttended };
     localStorage.setItem('frankly-french-data', JSON.stringify(data));
-  }, [phrasebook, points, streak, earnedBadges, stats, lastAttended]);
+  }, [isLoaded, phrasebook, points, streak, earnedBadges, stats, lastAttended]);
 
   // Daily Streak Logic
   useEffect(() => {
+    if (!isLoaded) return;
     const today = new Date().toISOString().split('T')[0];
     if (stats.lastCheckIn !== today) {
       const yesterday = new Date();
