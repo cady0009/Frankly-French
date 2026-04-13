@@ -41,7 +41,7 @@ app.post("/api/speech", async (req, res) => {
     const { text } = req.body;
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Say clearly: ${text}` }] }],
+      contents: [{ parts: [{ text: `Say: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -105,7 +105,11 @@ app.post("/api/dynamic-quiz", async (req, res) => {
       }
     });
 
-    res.json(JSON.parse(response.text));
+    const text = response.text.trim();
+    const jsonStr = text.startsWith("```json") 
+      ? text.replace(/^```json\n?/, "").replace(/\n?```$/, "") 
+      : text;
+    res.json(JSON.parse(jsonStr));
   } catch (error: any) {
     console.error("Quiz Error:", error);
     res.status(500).json({ error: error.message });
@@ -137,7 +141,11 @@ app.post("/api/dynamic-grammar", async (req, res) => {
       }
     });
 
-    res.json(JSON.parse(response.text));
+    const text = response.text.trim();
+    const jsonStr = text.startsWith("```json") 
+      ? text.replace(/^```json\n?/, "").replace(/\n?```$/, "") 
+      : text;
+    res.json(JSON.parse(jsonStr));
   } catch (error: any) {
     console.error("Grammar Error:", error);
     res.status(500).json({ error: error.message });

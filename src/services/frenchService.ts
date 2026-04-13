@@ -1,16 +1,31 @@
 import { FrenchLevel, Message, FRENCH_LEVELS } from "../types";
+import { GoogleGenAI, Modality, Type } from "@google/genai";
+
 export { FRENCH_LEVELS };
 export type { FrenchLevel, Message };
 
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+
 export async function chatWithTutor(messages: Message[], level: FrenchLevel) {
   try {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, level }),
+    const model = "gemini-3-flash-preview";
+    const systemInstruction = `You are a friendly and encouraging French tutor named 'Poonam'. 
+    The user is at the ${level} level. 
+    - Always respond primarily in French, but provide English translations in parentheses for difficult words or phrases if the user is a Beginner.
+    - Correct the user's French mistakes gently.
+    - Encourage conversation about French culture, food, and daily life.
+    - Keep responses concise and engaging.
+    - If the user asks for a translation, provide it clearly.`;
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
+      config: {
+        systemInstruction,
+      },
     });
-    const data = await response.json();
-    return data.text;
+
+    return response.text;
   } catch (error) {
     console.error("Chat Error:", error);
     return "Désolé, je n'ai pas pu me connecter au tuteur.";
@@ -19,13 +34,21 @@ export async function chatWithTutor(messages: Message[], level: FrenchLevel) {
 
 export async function generateSpeech(text: string) {
   try {
-    const response = await fetch("/api/speech", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: `Say: ${text}` }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
     });
-    const data = await response.json();
-    return data.data;
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+    return base64Audio;
   } catch (error) {
     console.error("TTS Error:", error);
     return null;
@@ -34,13 +57,17 @@ export async function generateSpeech(text: string) {
 
 export async function translateText(text: string, toFrench: boolean) {
   try {
-    const response = await fetch("/api/translate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, toFrench }),
+    const model = "gemini-3-flash-preview";
+    const prompt = toFrench 
+      ? `Translate the following English text to French: "${text}". Provide only the translation.`
+      : `Translate the following French text to English: "${text}". Provide only the translation.`;
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ parts: [{ text: prompt }] }],
     });
-    const data = await response.json();
-    return data.text;
+
+    return response.text;
   } catch (error) {
     console.error("Translate Error:", error);
     return "";
@@ -228,12 +255,33 @@ export async function getDynamicQuiz(lessonId: string, level: FrenchLevel) {
   if (!lesson) return null;
 
   try {
-    const response = await fetch("/api/dynamic-quiz", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: lesson.title, content: lesson.content, level }),
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Generate 3 multiple-choice quiz questions for a French lesson about "${lesson.title}" for ${level} level. 
+      The lesson content includes: ${JSON.stringify(lesson.content)}.
+      Return the response as a JSON array of objects with 'question', 'options' (array of 4 strings), and 'answer' (string, must be one of the options).`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              question: { type: Type.STRING },
+              options: { type: Type.ARRAY, items: { type: Type.STRING } },
+              answer: { type: Type.STRING }
+            },
+            required: ["question", "options", "answer"]
+          }
+        }
+      }
     });
-    return await response.json();
+
+    const text = response.text.trim();
+    const jsonStr = text.startsWith("```json") 
+      ? text.replace(/^```json\n?/, "").replace(/\n?```$/, "") 
+      : text;
+    return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error generating dynamic quiz:", error);
     return lesson.quiz; // Fallback to static quiz
@@ -245,12 +293,33 @@ export async function getDynamicGrammar(grammarId: string, level: FrenchLevel) {
   if (!grammar) return null;
 
   try {
-    const response = await fetch("/api/dynamic-grammar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: grammar.title, description: grammar.description, level }),
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Generate 3 fill-in-the-blank grammar exercises for "${grammar.title}" at ${level} level.
+      The topic is: ${grammar.description}.
+      Return the response as a JSON array of objects with 'sentence' (use ___ for blank), 'answer' (the missing word), and 'hint' (English translation or clue).`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              sentence: { type: Type.STRING },
+              answer: { type: Type.STRING },
+              hint: { type: Type.STRING }
+            },
+            required: ["sentence", "answer", "hint"]
+          }
+        }
+      }
     });
-    return await response.json();
+
+    const text = response.text.trim();
+    const jsonStr = text.startsWith("```json") 
+      ? text.replace(/^```json\n?/, "").replace(/\n?```$/, "") 
+      : text;
+    return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error generating dynamic grammar:", error);
     return grammar.exercises; // Fallback to static exercises
