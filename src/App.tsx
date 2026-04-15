@@ -91,6 +91,8 @@ export default function App() {
   const [grammarFinished, setGrammarFinished] = useState(false);
   const [grammarScore, setGrammarScore] = useState(0);
   const [isListening, setIsListening] = useState(false);
+  const [tutorInputLang, setTutorInputLang] = useState<'fr-FR' | 'en-US'>('fr-FR');
+  const recognitionRef = useRef<any>(null);
   const [currentQuiz, setCurrentQuiz] = useState<any[]>([]);
   const [currentGrammar, setCurrentGrammar] = useState<any[]>([]);
   const [lastAttended, setLastAttended] = useState<Record<string, string>>({});
@@ -141,27 +143,37 @@ export default function App() {
   };
 
   const startListening = (target: 'tutor' | 'translate') => {
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Speech recognition is not supported in this browser.");
+      console.error("Speech recognition is not supported in this browser.");
       return;
     }
 
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.continuous = false;
     recognition.interimResults = false;
 
     if (target === 'tutor') {
-      recognition.lang = 'fr-FR';
+      recognition.lang = tutorInputLang;
     } else {
       recognition.lang = isToFrench ? 'en-US' : 'fr-FR';
     }
 
     recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error", event.error);
       setIsListening(false);
+      recognitionRef.current = null;
     };
 
     recognition.onresult = (event: any) => {
@@ -173,8 +185,21 @@ export default function App() {
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      setIsListening(false);
+    }
   };
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem('frankly-french-data');
@@ -1324,31 +1349,53 @@ export default function App() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="p-4 bg-white border-t border-[#e5e5e0] flex gap-2">
-                <button 
-                  onClick={() => startListening('tutor')}
-                  className={cn(
-                    "p-3 rounded-full transition-colors",
-                    isListening ? "bg-red-500 text-white animate-pulse" : "text-[#FF6321] hover:bg-[#fff4e6]"
-                  )}
-                >
-                  <Mic size={20} />
-                </button>
-                <input 
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Écrivez en français..."
-                  className="flex-1 bg-[#fff4e6] border-none rounded-full px-5 py-3 text-sm focus:ring-2 focus:ring-[#FF6321] outline-none"
-                />
-                <button 
-                  onClick={handleSendMessage}
-                  disabled={!input.trim() || isTyping}
-                  className="w-12 h-12 bg-[#FF6321] text-white rounded-full flex items-center justify-center disabled:opacity-50 transition-all hover:scale-105 active:scale-95"
-                >
-                  <Send size={20} />
-                </button>
+              <div className="p-4 bg-white border-t border-[#e5e5e0] flex flex-col gap-2">
+                <div className="flex items-center gap-2 px-2">
+                  <button 
+                    onClick={() => setTutorInputLang('fr-FR')}
+                    className={cn(
+                      "text-[10px] px-2 py-1 rounded-full transition-all border",
+                      tutorInputLang === 'fr-FR' ? "bg-[#FF6321] text-white border-[#FF6321]" : "bg-white text-[#8e8e80] border-[#e5e5e0]"
+                    )}
+                  >
+                    Français
+                  </button>
+                  <button 
+                    onClick={() => setTutorInputLang('en-US')}
+                    className={cn(
+                      "text-[10px] px-2 py-1 rounded-full transition-all border",
+                      tutorInputLang === 'en-US' ? "bg-[#FF6321] text-white border-[#FF6321]" : "bg-white text-[#8e8e80] border-[#e5e5e0]"
+                    )}
+                  >
+                    English
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => startListening('tutor')}
+                    className={cn(
+                      "p-3 rounded-full transition-colors",
+                      isListening ? "bg-red-500 text-white animate-pulse" : "text-[#FF6321] hover:bg-[#fff4e6]"
+                    )}
+                  >
+                    <Mic size={20} />
+                  </button>
+                  <input 
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder={tutorInputLang === 'fr-FR' ? "Écrivez en français..." : "Write in English..."}
+                    className="flex-1 bg-[#fff4e6] border-none rounded-full px-5 py-3 text-sm focus:ring-2 focus:ring-[#FF6321] outline-none"
+                  />
+                  <button 
+                    onClick={handleSendMessage}
+                    disabled={!input.trim() || isTyping}
+                    className="w-12 h-12 bg-[#FF6321] text-white rounded-full flex items-center justify-center disabled:opacity-50 transition-all hover:scale-105 active:scale-95"
+                  >
+                    <Send size={20} />
+                  </button>
+                </div>
               </div>
             </motion.div>
           )}
