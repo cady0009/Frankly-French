@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Stats": {
+      "type": "object",
+      "properties": {
+        "messagesSent": { "type": "integer" },
+        "lessonsCompleted": { "type": "integer" },
+        "pronunciationsPracticed": { "type": "integer" },
+        "lastCheckIn": { "type": "string" }
+      }
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "points": { "type": "integer" },
+        "streak": { "type": "integer" },
+        "earnedBadges": { "type": "array", "items": { "type": "string" } },
+        "phrasebook": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "french": { "type": "string" },
+              "english": { "type": "string" }
+            }
+          }
+        },
+        "level": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "email": { "type": "string" },
+        "stats": { "$ref": "#/entities/Stats" },
+        "lastAttended": { "type": "object" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["points", "streak", "earnedBadges", "email", "stats"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles and stats"
+    }
+  }
+}

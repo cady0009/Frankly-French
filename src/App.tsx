@@ -30,6 +30,21 @@ import {
 import Markdown from 'react-markdown';
 import { cn } from './lib/utils';
 import { 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  onAuthStateChanged,
+  signOut,
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  onSnapshot 
+} from 'firebase/firestore';
+import { auth, db } from './lib/firebase';
+import { 
   LESSONS, 
   chatWithTutor, 
   generateSpeech, 
@@ -47,8 +62,17 @@ import {
 
 type View = 'home' | 'lessons' | 'tutor' | 'lesson-detail' | 'translate' | 'phrasebook' | 'listen' | 'daily' | 'profile' | 'quiz' | 'grammar';
 
+const ALLOWED_EMAILS = [
+  "friend1@gmail.com", 
+  "colleague2@company.com", 
+  "cady0009@gmail.com"
+];
+
 export default function App() {
   const [view, setView] = useState<View>('home');
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [unauthorized, setUnauthorized] = useState(false);
   const [level, setLevel] = useState<FrenchLevel>('Beginner');
   const [selectedLesson, setSelectedLesson] = useState<typeof LESSONS[0] | null>(null);
   const [messages, setMessages] = useState<Message[]>([
@@ -194,37 +218,115 @@ export default function App() {
   };
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setAuthLoading(true);
+      if (firebaseUser) {
+        const email = firebaseUser.email?.toLowerCase() || '';
+        if (ALLOWED_EMAILS.includes(email)) {
+          setUser(firebaseUser);
+          setUnauthorized(false);
+          
+          // Fetch or initialize user data in Firestore
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            setPoints(data.points || 0);
+            setStreak(data.streak || 0);
+            setEarnedBadges(data.earnedBadges || []);
+            setPhrasebook(data.phrasebook || []);
+            setStats(data.stats || {
+              messagesSent: 0,
+              lessonsCompleted: 0,
+              pronunciationsPracticed: 0,
+              lastCheckIn: '',
+            });
+            setLastAttended(data.lastAttended || {});
+            if (data.level) setLevel(data.level as FrenchLevel);
+          } else {
+            // Initializing new user
+            const newData = {
+              email: firebaseUser.email,
+              points: 0,
+              streak: 0,
+              earnedBadges: [],
+              phrasebook: [],
+              stats: {
+                messagesSent: 0,
+                lessonsCompleted: 0,
+                pronunciationsPracticed: 0,
+                lastCheckIn: '',
+              },
+              lastAttended: {},
+              level: 'Beginner',
+              createdAt: new Date().toISOString()
+            };
+            await setDoc(userDocRef, newData);
+          }
+        } else {
+          setUser(null);
+          setUnauthorized(true);
+          await signOut(auth);
+        }
+      } else {
+        setUser(null);
+      }
+      setAuthLoading(false);
+      setIsLoaded(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Sync data to Firestore whenever it changes
+  useEffect(() => {
+    if (!isLoaded || !user || unauthorized) return;
+
+    const syncData = async () => {
+      if (!user?.email) return;
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await updateDoc(userDocRef, {
+          email: user.email,
+          points,
+          streak,
+          earnedBadges,
+          stats,
+          phrasebook,
+          lastAttended,
+          level
+        });
+      } catch (error) {
+        console.error("Error syncing data to Firestore:", error);
+      }
+    };
+
+    const timeoutId = setTimeout(syncData, 1000); // Debounce sync
+    return () => clearTimeout(timeoutId);
+  }, [points, streak, earnedBadges, stats, phrasebook, lastAttended, level, isLoaded, user, unauthorized]);
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Login Error:", error);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setView('home');
+  };
+
+  useEffect(() => {
     return () => {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
     };
   }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('frankly-french-data');
-    if (saved) {
-      const data = JSON.parse(saved);
-      setPhrasebook(data.phrasebook || []);
-      setPoints(data.points || 0);
-      setStreak(data.streak || 0);
-      setEarnedBadges(data.earnedBadges || []);
-      setStats(data.stats || {
-        messagesSent: 0,
-        lessonsCompleted: 0,
-        pronunciationsPracticed: 0,
-        lastCheckIn: '',
-      });
-      setLastAttended(data.lastAttended || {});
-    }
-    setIsLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isLoaded) return;
-    const data = { phrasebook, points, streak, earnedBadges, stats, lastAttended };
-    localStorage.setItem('frankly-french-data', JSON.stringify(data));
-  }, [isLoaded, phrasebook, points, streak, earnedBadges, stats, lastAttended]);
 
   // Daily Streak Logic
   useEffect(() => {
@@ -470,6 +572,72 @@ export default function App() {
       setPlayingAudio(null);
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#fdfdfb]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-[#FF6321] border-t-transparent rounded-full animate-spin" />
+          <p className="font-serif italic text-[#FF6321]">Chargement de votre expérience...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (unauthorized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#fdfdfb] p-8">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full bg-white p-12 rounded-[40px] shadow-2xl border border-[#e5e5e0] text-center"
+        >
+          <XCircle size={64} className="text-red-500 mx-auto mb-6" />
+          <h1 className="text-3xl font-serif font-bold mb-4">Accès Refusé</h1>
+          <p className="text-[#8e8e80] mb-8 leading-relaxed">
+            Désolé, votre adresse email n'est pas autorisée à accéder à Frankly French pour le moment. 
+            Veuillez contacter l'administrateur si vous pensez qu'il s'agit d'une erreur.
+          </p>
+          <button 
+            onClick={() => setUnauthorized(false)}
+            className="w-full bg-[#FF6321] text-white py-4 rounded-full font-bold shadow-lg hover:shadow-orange-200 transition-all active:scale-95"
+          >
+            Réessayer
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#fdfdfb] p-8">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-white p-10 rounded-[40px] shadow-2xl border border-[#e5e5e0] text-center"
+        >
+          <div className="w-20 h-20 bg-[#fff4e6] rounded-3xl flex items-center justify-center mx-auto mb-8">
+            <GraduationCap size={40} className="text-[#FF6321]" />
+          </div>
+          <h1 className="text-4xl font-serif font-bold mb-3 tracking-tight">Frankly French</h1>
+          <p className="text-[#8e8e80] mb-10 leading-relaxed italic">Votre compagnon d'apprentissage immersif.</p>
+          
+          <button 
+            onClick={handleLogin}
+            className="w-full bg-white border-2 border-[#e5e5e0] text-[#1a1a1a] py-4 rounded-full font-bold flex items-center justify-center gap-3 hover:bg-[#fdfdfb] transition-all active:scale-95 mb-4"
+          >
+            <Globe size={20} className="text-[#4285F4]" />
+            Se connecter avec Google
+          </button>
+          
+          <p className="text-[10px] text-[#8e8e80] uppercase tracking-widest mt-6">
+            Approuvé par des milliers de passionnés.
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-white shadow-xl relative overflow-hidden">
@@ -1298,6 +1466,29 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              <div className="pt-8 border-t border-[#e5e5e0] space-y-4 pb-12">
+                <div className="bg-[#fdfdfb] border border-[#e5e5e0] p-4 rounded-3xl flex items-center gap-4">
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt="" className="w-12 h-12 rounded-full border-2 border-white shadow-sm" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-12 h-12 bg-[#fff4e6] rounded-full flex items-center justify-center border-2 border-[#FF6321]">
+                      <User size={24} className="text-[#FF6321]" />
+                    </div>
+                  )}
+                  <div className="flex-1 overflow-hidden">
+                    <p className="font-bold text-sm truncate">{user?.displayName || 'User'}</p>
+                    <p className="text-xs text-[#8e8e80] truncate">{user?.email}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={handleLogout}
+                  className="w-full py-4 text-red-500 font-bold border-2 border-red-100 rounded-3xl hover:bg-red-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  <XCircle size={18} />
+                  Sign Out
+                </button>
+              </div>
             </motion.div>
           )}
           {view === 'tutor' && (
@@ -1403,11 +1594,11 @@ export default function App() {
       </main>
 
       {/* Footer Navigation */}
-      {['home', 'listen', 'daily'].includes(view) && (
+      {['home', 'listen', 'daily', 'profile'].includes(view) && (
         <footer className="p-6 border-t border-[#e5e5e0] bg-[#fdfdfb] flex justify-around">
           <button 
             onClick={() => setView('home')}
-            className={cn("flex flex-col items-center gap-1 transition-colors", view === 'home' ? "text-[#FF6321]" : "text-[#8e8e80] hover:text-[#FF6321]")}
+            className={cn("flex flex-col items-center gap-1 transition-colors", view === 'home' || view === 'lessons' || view === 'lesson-detail' || view === 'quiz' || view === 'grammar' ? "text-[#FF6321]" : "text-[#8e8e80] hover:text-[#FF6321]")}
           >
             <Globe size={20} />
             <span className="text-[10px] font-bold uppercase tracking-widest">Explore</span>
@@ -1425,6 +1616,13 @@ export default function App() {
           >
             <Sparkles size={20} />
             <span className="text-[10px] font-bold uppercase tracking-widest">Daily</span>
+          </button>
+          <button 
+            onClick={() => setView('profile')}
+            className={cn("flex flex-col items-center gap-1 transition-colors", view === 'profile' ? "text-[#FF6321]" : "text-[#8e8e80] hover:text-[#FF6321]")}
+          >
+            <User size={20} />
+            <span className="text-[10px] font-bold uppercase tracking-widest">Profile</span>
           </button>
         </footer>
       )}

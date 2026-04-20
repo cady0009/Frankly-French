@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+    
+    function isAllowedEmail() {
+      // Logic for email allowlist as requested by user
+      let allowedEmails = ["friend1@gmail.com", "colleague2@company.com", "cady0009@gmail.com"];
+      return request.auth.token.email in allowedEmails;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['points', 'streak', 'earnedBadges', 'email', 'stats']) &&
+               data.points is int &&
+               data.streak is int &&
+               data.earnedBadges is list &&
+               data.email is string &&
+               data.email == request.auth.token.email &&
+               data.stats is map &&
+               data.stats.keys().hasAll(['messagesSent', 'lessonsCompleted', 'pronunciationsPracticed', 'lastCheckIn']);
+      }
+
+      allow get: if isSignedIn() && isOwner(userId);
+      
+      allow create: if isSignedIn() && 
+                      isOwner(userId) && 
+                      isAllowedEmail() && 
+                      isValidUser(incoming());
+                      
+      allow update: if isSignedIn() && 
+                      isOwner(userId) && 
+                      isAllowedEmail() && 
+                      isValidUser(incoming()) &&
+                      incoming().email == resource.data.email;
+    }
+  }
+}
